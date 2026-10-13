@@ -237,3 +237,49 @@ Le projet gère notamment :
 │ /metrics         │
 └──────────────────┘
 ```
+
+
+---
+
+# Rapport TP DevOps (INGC2)
+
+## Choix techniques
+
+- **Image de base** : `python:3.12-slim-bookworm` (légère, version précise, jamais `latest`). Alpine écartée : musl complique l'installation de `psutil` et peut allonger les builds.
+- **Multi-stage** : un étage `builder` installe les dépendances ; l'image finale ne reçoit que le résultat (`COPY --from=builder`), sans outils de build.
+- **Dépendances séparées** : `requirements-api.txt` (FastAPI, uvicorn) et `requirements-agent.txt` (psutil, requests, python-dotenv), versions épinglées. pytest, black et flake8 ne sont pas dans les images de production.
+- **Cache et taille** : dépendances copiées avant le code, `pip install --no-cache-dir`, `.dockerignore` (.git, .venv, .env, tests).
+- **Sécurité** : utilisateur non-root (`appuser`), aucun secret dans l'image ni dans le dépôt (`.env` ignoré, `.env.example` fourni), secrets GitHub pour Docker Hub et SonarQube Cloud.
+- **Prêt pour la prod** : uvicorn sans `--reload`, `--host 0.0.0.0`, `EXPOSE 8000`, `HEALTHCHECK` sur `/health` (via Python, `curl` étant absent de l'image slim).
+- **Commande `uptime`** : absente de l'image slim, fournie par le paquet Debian `procps`, ajouté uniquement à l'image de l'agent.
+- **Docker Compose** : l'agent joint l'API par son nom de service (`http://api:8000/metrics`), démarre quand l'API est saine (`service_healthy`), configuration via `.env`, `restart: unless-stopped`.
+
+## Tailles des images
+
+| Image | Taille sur disque | Taille du contenu |
+|---|---|---|
+| metrics-api | 221 MB | 53 MB |
+| metrics-agent | 2026 MB | 49.4 MB |
+
+Images publiées : https://hub.docker.com/r/<TON-NOM-DOCKERHUB>/metrics-api et https://hub.docker.com/r/jamesbee007/metrics-agent
+
+## Pipeline (GitHub Actions)
+
+1. **test** : pytest avec couverture, analyse SonarQube Cloud, Quality Gate bloquant.
+2. **build-scan-push** (matrice api/agent, après `test`) : build local, scan Trivy (HIGH/CRITICAL corrigeables, `exit-code: 1`), puis push Docker Hub (tags SHA et `latest`) uniquement sur `main`. L'image poussée est celle qui a été scannée. L'action Trivy est épinglée par commit.
+
+## Preuve d'échec volontaire
+
+J'ai remplacé `requests==2.34.2` par `requests==2.19.1` (version vulnérable). Trivy a échoué sur l'image de l'agent (failles HIGH sur `requests` et `urllib3`). Après fusion dans `main`, l'étape de push a été ignorée et le tag `latest` sur Docker Hub est resté inchangé. En revenant à `requests==2.34.2`, le pipeline est repassé au vert et l'image saine a été publiée.
+
+## Conteneur et hôte
+
+Dans un conteneur, `psutil` lit les informations du noyau de l'hôte (ici la machine virtuelle de Docker Desktop) et non les limites du conteneur. Le nom d'hôte relevé est l'identifiant du conteneur, pas celui du serveur. Pour surveiller un vrai serveur, il faut donc soit installer l'agent directement sur l'hôte, soit lui donner accès au système hôte (réseau et `/proc` de l'hôte) ; pour surveiller un conteneur, lire ses limites cgroup.
+
+## Difficultés rencontrées
+
+- `pyyaml` ne s'installait pas sous Python 3.15 (pas de version précompilée) : passage à Python 3.12, aligné sur l'image Docker.
+- 2 tests échouaient sous Windows (la fonction `get_load_average` renvoie `None` hors Linux) : tests rendus indépendants de l'OS.
+- Le README annonce un dossier `tests/`, mais les tests sont dans `app/tests/`.
+- Un workflow hérité du projet d'origine (`pipeline.yaml`, avec déploiement sur un VPS tiers) échouait et faisait doublon : supprimé.
+- Avertissements non bloquants dans Actions (dépréciation de Node 20, migration d'`ubuntu-latest`).
