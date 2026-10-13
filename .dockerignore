@@ -1,1 +1,28 @@
+# Git et environnements
+.git
+.gitignore
+.venv
+venv
+
+# Secrets : jamais dans l'image
 .env
+.env.*
+
+# Fichiers Python temporaires
+__pycache__
+*.pyc
+.pytest_cache
+.coverage
+coverage.xml
+
+# Editeurs
+.vscode
+.idea
+
+# Inutile pour faire tourner l'application
+app/tests
+test_api.py
+mon_noufichier.txt
+README.md
+Dockerfile*
+docker-compose*.yml

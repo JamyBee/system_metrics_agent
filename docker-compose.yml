@@ -1,0 +1,21 @@
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+
+  agent:
+    build:
+      context: .
+      dockerfile: Dockerfile.agent
+    env_file:
+      - .env
+    environment:
+      METRICS_ENDPOINT: http://api:8000/metrics
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
